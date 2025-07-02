@@ -1,17 +1,15 @@
 #!/bin/bash
-# Glitch startup script with exact Node path
+# Glitch startup script with exact Node and npm paths
 
 echo "Starting Physics Battle Arena..."
 
-# Use the exact path we found
-NODE_PATH="/opt/nvm/versions/node/v14/bin/node"
+# Set up NVM paths
+export NVM_DIR="/opt/nvm"
+export PATH="/opt/nvm/versions/node/v14/bin:$PATH"
 
-if [ -f "$NODE_PATH" ]; then
-    echo "Using Node at: $NODE_PATH"
-    $NODE_PATH --version
-    $NODE_PATH server.js
-else
-    # Fallback to searching
-    echo "Node not at expected path, searching..."
-    /opt/nvm/versions/node/v*/bin/node server.js
-fi
+# Verify paths
+echo "Node path: $(which node)"
+echo "NPM path: $(which npm)"
+
+# Run the server directly with node
+/opt/nvm/versions/node/v14/bin/node server.js
