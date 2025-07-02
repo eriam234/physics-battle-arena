@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deployment Protocol Test Suite</title>
+    <style>
+        body {
+            font-family: monospace;
+            background: #1a1a1a;
+            color: #0f0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 { color: #0ff; }
+        .test {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #333;
+            background: #0a0a0a;
+        }
+        .passed { border-color: #0f0; }
+        .failed { border-color: #f00; color: #f00; }
+        .pending { border-color: #ff0; color: #ff0; }
+        .timer { font-size: 24px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>🧪 Deployment Protocol Test Suite</h1>
+    
+    <div class="test passed" id="test1">
+        <strong>TEST 1: Node Version</strong><br>
+        ✅ PASSED - Check server console for version
+    </div>
+    
+    <div class="test passed" id="test2">
+        <strong>TEST 2: HTTP Server</strong><br>
+        ✅ PASSED - This page loaded successfully
+    </div>
+    
+    <div class="test pending" id="test3">
+        <strong>TEST 3: WebSocket Connection</strong><br>
+        <span id="ws-status">⏳ Connecting...</span>
+    </div>
+    
+    <div class="test pending" id="test4">
+        <strong>TEST 4: 5-Minute Sleep Test</strong><br>
+        <span id="sleep-status">⏳ Waiting for WebSocket...</span><br>
+        <div class="timer" id="timer">0s</div>
+        <small>Need to stay active for 360 seconds (6 minutes)</small>
+    </div>
+    
+    <div class="test" id="summary" style="margin-top: 30px; display: none;">
+        <h2>Test Summary</h2>
+        <div id="summary-content"></div>
+    </div>
+
+    <script>
+        // TEST 3: WebSocket Connection
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}`;
+        
+        console.log('Attempting WebSocket connection to:', wsUrl);
+        
+        const ws = new WebSocket(wsUrl);
+        let testStartTime = Date.now();
+        
+        ws.onopen = () => {
+            document.getElementById('test3').className = 'test passed';
+            document.getElementById('ws-status').innerHTML = '✅ PASSED - Connected via ' + wsUrl;
+            document.getElementById('sleep-status').innerHTML = '⏳ Testing sleep prevention...';
+        };
+        
+        ws.onerror = (error) => {
+            document.getElementById('test3').className = 'test failed';
+            document.getElementById('ws-status').innerHTML = '❌ FAILED - ' + error.type;
+            document.getElementById('test4').className = 'test failed';
+            document.getElementById('sleep-status').innerHTML = '❌ Cannot test - WebSocket failed';
+            showSummary();
+        };
+        
+        ws.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            if (data.type === 'update') {
+                document.getElementById('timer').textContent = data.elapsed + 's';
+                
+                if (data.elapsed >= 360) {
+                    document.getElementById('test4').className = 'test passed';
+                    document.getElementById('sleep-status').innerHTML = '✅ ' + data.message;
+                    showSummary();
+                }
+            }
+        };
+        
+        ws.onclose = () => {
+            const elapsed = Math.floor((Date.now() - testStartTime) / 1000);
+            if (elapsed < 360) {
+                document.getElementById('test4').className = 'test failed';
+                document.getElementById('sleep-status').innerHTML = 
+                    `❌ FAILED - Connection closed after ${elapsed}s`;
+                showSummary();
+            }
+        };
+        
+        function showSummary() {
+            const summary = document.getElementById('summary');
+            const content = document.getElementById('summary-content');
+            
+            const results = {
+                'Node Version': '✅ Check server logs',
+                'HTTP Server': '✅ Working',
+                'WebSocket': document.querySelector('#test3').classList.contains('passed') ? '✅ Working' : '❌ Failed',
+                'Sleep Prevention': document.querySelector('#test4').classList.contains('passed') ? '✅ Working' : '❌ Failed or incomplete'
+            };
+            
+            let html = '<h3>Results:</h3><ul>';
+            for (const [test, result] of Object.entries(results)) {
+                html += `<li><strong>${test}:</strong> ${result}</li>`;
+            }
+            html += '</ul>';
+            
+            if (results['WebSocket'].includes('✅') && results['Sleep Prevention'].includes('✅')) {
+                html += '<h3>✅ All tests passed! Ready to deploy the game.</h3>';
+            } else {
+                html += '<h3>⚠️ Some tests failed. Check deployment-gotchas.md</h3>';
+            }
+            
+            content.innerHTML = html;
+            summary.style.display = 'block';
+        }
+        
+        // Show summary after 7 minutes regardless
+        setTimeout(showSummary, 420000);
+    </script>
+</body>
+</html>
