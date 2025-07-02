@@ -18,7 +18,7 @@ app.use(express.static(__dirname));
 // Serve the multiplayer HTML at root
 app.get('/', (req, res) => {
   const path = require('path');
-  const filePath = path.join(__dirname, 'index-multiplayer.html');
+  const filePath = path.join(__dirname, 'index.html');
   console.log('Serving file:', filePath);
   res.sendFile(filePath);
 });
