@@ -4,19 +4,13 @@
   "description": "Multiplayer physics battle game",
   "main": "server.js",
   "scripts": {
-    "start": "bash start.sh",
-    "start-direct": "/opt/nvm/versions/node/v14/bin/node server.js",
-    "server": "node server.js",
-    "server-dev": "nodemon server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "express": "^4.18.2",
     "ws": "^8.13.0"
   },
-  "devDependencies": {
-    "nodemon": "^3.1.10"
-  },
   "engines": {
-    "node": ">=14.0.0"
+    "node": "14.x"
   }
 }
