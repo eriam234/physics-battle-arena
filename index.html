@@ -359,7 +359,9 @@
                     entities: Array.from(this.bodies.values()).map(body => ({
                         id: body.id,
                         position: { x: body.position.x, y: body.position.y },
-                        velocity: { x: body.velocity.x, y: body.velocity.y }
+                        velocity: { x: body.velocity.x, y: body.velocity.y },
+                        radius: body.radius,
+                        mass: body.mass
                     })),
                     timestamp: Date.now()
                 };
@@ -583,7 +585,8 @@
                     this.ctx.lineWidth = 2;
                     this.ctx.beginPath();
                     this.ctx.moveTo(0, 0);
-                    const vel = Math.min(entity.velocity.length() * 0.1, entity.radius);
+                    const vel = Math.sqrt(entity.velocity.x * entity.velocity.x + entity.velocity.y * entity.velocity.y) * 0.1;
+                    const velClamped = Math.min(vel, entity.radius);
                     this.ctx.lineTo(
                         entity.velocity.x * 0.1,
                         entity.velocity.y * 0.1
