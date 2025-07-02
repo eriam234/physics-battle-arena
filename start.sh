@@ -1,25 +1,17 @@
 #!/bin/bash
-# Glitch startup script to ensure Node is available
+# Glitch startup script with exact Node path
 
 echo "Starting Physics Battle Arena..."
-echo "Current PATH: $PATH"
-echo "Looking for Node..."
 
-# Try different node locations
-if command -v node &> /dev/null; then
-    echo "Found node at: $(which node)"
-    node --version
-    node server.js
-elif [ -f /usr/local/bin/node ]; then
-    echo "Using /usr/local/bin/node"
-    /usr/local/bin/node --version
-    /usr/local/bin/node server.js
-elif [ -f /opt/nvm/versions/node/v14.*/bin/node ]; then
-    echo "Using NVM node"
-    /opt/nvm/versions/node/v14.*/bin/node --version
-    /opt/nvm/versions/node/v14.*/bin/node server.js
+# Use the exact path we found
+NODE_PATH="/opt/nvm/versions/node/v14/bin/node"
+
+if [ -f "$NODE_PATH" ]; then
+    echo "Using Node at: $NODE_PATH"
+    $NODE_PATH --version
+    $NODE_PATH server.js
 else
-    echo "ERROR: Cannot find node executable!"
-    echo "Trying with npx..."
-    npx node server.js
+    # Fallback to searching
+    echo "Node not at expected path, searching..."
+    /opt/nvm/versions/node/v*/bin/node server.js
 fi
