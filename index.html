@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Physics Battle Arena - Online Multiplayer</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #0a0a0f;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        #gameCanvas {
+            border: 2px solid #4ecdc4;
+            box-shadow: 0 0 20px rgba(78, 205, 196, 0.5);
+        }
+        
+        .controls {
+            margin-top: 20px;
+            text-align: center;
+        }
+        
+        .controls h3 {
+            color: #4ecdc4;
+        }
+        
+        .control-group {
+            margin: 10px 0;
+        }
+        
+        .key {
+            display: inline-block;
+            padding: 5px 10px;
+            background: #333;
+            border: 1px solid #666;
+            border-radius: 4px;
+            margin: 0 5px;
+        }
+        
+        .info {
+            margin-top: 20px;
+            max-width: 800px;
+            text-align: center;
+            color: #aaa;
+        }
+        
+        #connectionStatus {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+            background: #333;
+        }
+        
+        #connectionStatus.connected {
+            background: #2d5a2d;
+            color: #4ecdc4;
+        }
+        
+        #connectionStatus.disconnected {
+            background: #5a2d2d;
+            color: #ff6b6b;
+        }
+        
+        #serverInput {
+            margin: 10px 0;
+            padding: 5px;
+            background: #222;
+            color: white;
+            border: 1px solid #444;
+            border-radius: 4px;
+            width: 300px;
+        }
+        
+        #connectButton {
+            padding: 8px 20px;
+            background: #4ecdc4;
+            color: #0a0a0f;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        #connectButton:hover {
+            background: #45b7b8;
+        }
+        
+        #connectButton:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <h1>Physics Battle Arena - Online Multiplayer</h1>
+    
+    <div id="connectionPanel">
+        <input type="text" id="serverInput" placeholder="wss://your-game.glitch.me" value="ws://localhost:3000">
+        <button id="connectButton">Connect</button>
+        <div id="connectionStatus" class="disconnected">Disconnected</div>
+    </div>
+    
+    <canvas id="gameCanvas"></canvas>
+    
+    <div class="controls">
+        <h3>Controls</h3>
+        <div class="control-group">
+            Movement: <span class="key">W</span> <span class="key">A</span> <span class="key">S</span> <span class="key">D</span> or <span class="key">Arrow Keys</span>
+        </div>
+        <div class="control-group">
+            Dash: <span class="key">Space</span> or <span class="key">Shift</span>
+        </div>
+    </div>
+    
+    <div class="info">
+        <p>Enter your server URL and click Connect to join the game!</p>
+        <p id="playerInfo"></p>
+    </div>
+    
+    <script type="module">
+        // Copy all the game code from index.html but with NetworkLayer actually networked
+        
+        class EventEmitter {
+            constructor() {
+                this.events = {};
+            }
+            
+            on(event, callback) {
+                if (!this.events[event]) {
+                    this.events[event] = [];
+                }
+                this.events[event].push(callback);
+            }
+            
+            emit(event, data) {
+                if (this.events[event]) {
+                    this.events[event].forEach(callback => callback(data));
+                }
+            }
+        }
+        
+        class Vector2 {
+            constructor(x = 0, y = 0) {
+                this.x = x;
+                this.y = y;
+            }
+            
+            add(other) {
+                return new Vector2(this.x + other.x, this.y + other.y);
+            }
+            
+            multiply(scalar) {
+                return new Vector2(this.x * scalar, this.y * scalar);
+            }
+            
+            length() {
+                return Math.sqrt(this.x * this.x + this.y * this.y);
+            }
+            
+            normalize() {
+                const len = this.length();
+                if (len === 0) return new Vector2(0, 0);
+                return new Vector2(this.x / len, this.y / len);
+            }
+        }
+        
+        // Real NetworkLayer with WebSocket
+        class NetworkLayer {
+            constructor(config, events) {
+                this.config = config;
+                this.events = events;
+                this.ws = null;
+                this.connected = false;
+                this.playerId = null;
+                this.ballId = null;
+                this.isHost = false;
+                this.entities = new Map();
+                this.currentFrame = 0;
+            }
+            
+            connect(serverUrl) {
+                return new Promise((resolve, reject) => {
+                    console.log('Connecting to:', serverUrl);
+                    this.ws = new WebSocket(serverUrl);
+                    
+                    this.ws.onopen = () => {
+                        console.log('Connected to server!');
+                        this.connected = true;
+                        this.events.emit('network:connected');
+                        resolve();
+                    };
+                    
+                    this.ws.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.handleMessage(data);
+                    };
+                    
+                    this.ws.onerror = (error) => {
+                        console.error('WebSocket error:', error);
+                        this.events.emit('network:error', error);
+                        reject(error);
+                    };
+                    
+                    this.ws.onclose = () => {
+                        console.log('Disconnected from server');
+                        this.connected = false;
+                        this.events.emit('network:disconnected');
+                    };
+                });
+            }
+            
+            handleMessage(data) {
+                switch(data.type) {
+                    case 'welcome':
+                        this.playerId = data.playerId;
+                        this.ballId = data.ballId;
+                        this.isHost = data.playerId === 'player1';
+                        this.currentFrame = data.frame;
+                        
+                        // Initialize entities
+                        data.entities.forEach(entity => {
+                            this.entities.set(entity.id, entity);
+                        });
+                        
+                        this.events.emit('network:welcome', {
+                            playerId: this.playerId,
+                            ballId: this.ballId,
+                            entities: data.entities,
+                            isHost: this.isHost
+                        });
+                        break;
+                        
+                    case 'playerJoined':
+                        this.entities.set(data.ballId, data.entity);
+                        this.events.emit('network:playerJoined', data);
+                        break;
+                        
+                    case 'playerLeft':
+                        this.entities.delete(data.ballId);
+                        this.events.emit('network:playerLeft', data);
+                        break;
+                        
+                    case 'playerInput':
+                        this.events.emit('network:remoteInput', {
+                            playerId: data.playerId,
+                            ballId: data.ballId,
+                            input: data.input
+                        });
+                        break;
+                        
+                    case 'physicsSync':
+                        if (!this.isHost) {
+                            this.currentFrame = data.frame;
+                            this.events.emit('network:physicsSync', data.state);
+                        }
+                        break;
+                }
+            }
+            
+            sendInput(input) {
+                if (!this.connected || !this.ws) return;
+                
+                this.ws.send(JSON.stringify({
+                    type: 'input',
+                    input: input,
+                    frame: this.currentFrame
+                }));
+            }
+            
+            sendPhysicsUpdate(state) {
+                if (!this.connected || !this.ws || !this.isHost) return;
+                
+                this.ws.send(JSON.stringify({
+                    type: 'physicsUpdate',
+                    state: state,
+                    frame: this.currentFrame++
+                }));
+            }
+            
+            disconnect() {
+                if (this.ws) {
+                    this.ws.close();
+                }
+            }
+        }
+        
+        // PhysicsEngine - same as before but with networking hooks
+        class PhysicsEngine {
+            constructor(config, events) {
+                this.config = config;
+                this.events = events;
+                this.bodies = new Map();
+                this.remoteInputs = new Map(); // Track remote player inputs
+            }
+            
+            step(deltaTime) {
+                const dt = Math.min(deltaTime, 0.016);
+                
+                // Apply gravity
+                for (const body of this.bodies.values()) {
+                    body.velocity.y += this.config.gravity.y * dt;
+                }
+                
+                // Apply remote inputs
+                for (const [ballId, force] of this.remoteInputs) {
+                    this.applyForce(ballId, force);
+                }
+                this.remoteInputs.clear();
+                
+                // Update positions
+                for (const body of this.bodies.values()) {
+                    // Clamp velocity to max
+                    const speed = Math.sqrt(body.velocity.x * body.velocity.x + body.velocity.y * body.velocity.y);
+                    if (speed > this.config.maxVelocity) {
+                        const scale = this.config.maxVelocity / speed;
+                        body.velocity.x *= scale;
+                        body.velocity.y *= scale;
+                    }
+                    
+                    body.position.x += body.velocity.x * dt;
+                    body.position.y += body.velocity.y * dt;
+                }
+                
+                // Detect and resolve collisions
+                const collisions = this.detectCollisions();
+                for (const collision of collisions) {
+                    this.resolveCollision(collision);
+                    this.events.emit('collision', collision);
+                }
+                
+                // World bounds
+                for (const body of this.bodies.values()) {
+                    if (body.position.x - body.radius < 0) {
+                        body.position.x = body.radius;
+                        body.velocity.x = Math.abs(body.velocity.x) * 0.5;
+                    }
+                    if (body.position.x + body.radius > this.config.worldBounds.max.x) {
+                        body.position.x = this.config.worldBounds.max.x - body.radius;
+                        body.velocity.x = -Math.abs(body.velocity.x) * 0.5;
+                    }
+                    if (body.position.y - body.radius < 0) {
+                        body.position.y = body.radius;
+                        body.velocity.y = Math.abs(body.velocity.y) * 0.5;
+                    }
+                    if (body.position.y + body.radius > this.config.worldBounds.max.y) {
+                        body.position.y = this.config.worldBounds.max.y - body.radius;
+                        body.velocity.y = -Math.abs(body.velocity.y) * 0.5;
+                    }
+                }
+                
+                // Prepare state for networking
+                const state = {
+                    entities: Array.from(this.bodies.values()).map(body => ({
+                        id: body.id,
+                        position: { x: body.position.x, y: body.position.y },
+                        velocity: { x: body.velocity.x, y: body.velocity.y }
+                    })),
+                    timestamp: Date.now()
+                };
+                
+                this.events.emit('physics:update', state);
+            }
+            
+            syncState(state) {
+                // Apply authoritative state from host
+                state.entities.forEach(entity => {
+                    const body = this.bodies.get(entity.id);
+                    if (body) {
+                        body.position.x = entity.position.x;
+                        body.position.y = entity.position.y;
+                        body.velocity.x = entity.velocity.x;
+                        body.velocity.y = entity.velocity.y;
+                    }
+                });
+            }
+            
+            addBody(body) {
+                this.bodies.set(body.id, body);
+            }
+            
+            removeBody(id) {
+                this.bodies.delete(id);
+            }
+            
+            getBodies() {
+                return Array.from(this.bodies.values());
+            }
+            
+            applyForce(id, force) {
+                const body = this.bodies.get(id);
+                if (body) {
+                    const forceMagnitude = Math.sqrt(force.x * force.x + force.y * force.y);
+                    if (forceMagnitude > 100000) {
+                        body.velocity.x += force.x / body.mass / 100;
+                        body.velocity.y += force.y / body.mass / 100;
+                    } else {
+                        body.velocity.x += (force.x / body.mass) * 0.016;
+                        body.velocity.y += (force.y / body.mass) * 0.016;
+                    }
+                }
+            }
+            
+            applyRemoteInput(ballId, force) {
+                this.remoteInputs.set(ballId, force);
+            }
+            
+            detectCollisions() {
+                const collisions = [];
+                const bodies = Array.from(this.bodies.values());
+                
+                for (let i = 0; i < bodies.length; i++) {
+                    for (let j = i + 1; j < bodies.length; j++) {
+                        const a = bodies[i];
+                        const b = bodies[j];
+                        
+                        const dx = b.position.x - a.position.x;
+                        const dy = b.position.y - a.position.y;
+                        const distance = Math.sqrt(dx * dx + dy * dy);
+                        const minDistance = a.radius + b.radius;
+                        
+                        if (distance < minDistance) {
+                            collisions.push({
+                                bodyA: a.id,
+                                bodyB: b.id,
+                                normal: new Vector2(dx / distance, dy / distance),
+                                force: 100
+                            });
+                        }
+                    }
+                }
+                return collisions;
+            }
+            
+            resolveCollision(collision) {
+                const a = this.bodies.get(collision.bodyA);
+                const b = this.bodies.get(collision.bodyB);
+                if (!a || !b) return;
+                
+                const relVelX = b.velocity.x - a.velocity.x;
+                const relVelY = b.velocity.y - a.velocity.y;
+                const velAlongNormal = relVelX * collision.normal.x + relVelY * collision.normal.y;
+                
+                if (velAlongNormal > 0) return;
+                
+                const restitution = 0.7;
+                const impulse = 2 * velAlongNormal / (1/a.mass + 1/b.mass);
+                const j = impulse * (1 + restitution);
+                
+                a.velocity.x -= j * collision.normal.x / a.mass;
+                a.velocity.y -= j * collision.normal.y / a.mass;
+                b.velocity.x += j * collision.normal.x / b.mass;
+                b.velocity.y += j * collision.normal.y / b.mass;
+                
+                // Separate bodies
+                const dx = b.position.x - a.position.x;
+                const dy = b.position.y - a.position.y;
+                const d = Math.sqrt(dx * dx + dy * dy);
+                const overlap = a.radius + b.radius - d;
+                
+                if (overlap > 0) {
+                    const separation = overlap + 5;
+                    const separationX = (dx / d) * separation * 0.6;
+                    const separationY = (dy / d) * separation * 0.6;
+                    
+                    const massRatio = a.mass / (a.mass + b.mass);
+                    a.position.x -= separationX * (1 - massRatio);
+                    a.position.y -= separationY * (1 - massRatio);
+                    b.position.x += separationX * massRatio;
+                    b.position.y += separationY * massRatio;
+                }
+            }
+        }
+        
+        // RenderEngine - same as before
+        class RenderEngine {
+            constructor(config, events) {
+                this.config = config;
+                this.events = events;
+                this.particles = [];
+                this.currentGameState = { entities: [] };
+                this.playerColors = {
+                    'ball1': '#ff6b6b',  // Red
+                    'ball2': '#4ecdc4',  // Cyan
+                    'ball3': '#45b7d1',  // Blue
+                    'ball4': '#f7dc6f'   // Yellow
+                };
+                
+                events.on('physics:update', (data) => {
+                    this.currentGameState = data;
+                });
+                
+                events.on('collision', (collision) => {
+                    const entity = this.currentGameState.entities.find(e => e.id === collision.bodyA);
+                    if (entity && collision.force > 50) {
+                        for (let i = 0; i < 5; i++) {
+                            this.particles.push({
+                                x: entity.position.x,
+                                y: entity.position.y,
+                                vx: (Math.random() - 0.5) * 200,
+                                vy: (Math.random() - 0.5) * 200,
+                                life: 500,
+                                color: '#ffff00'
+                            });
+                        }
+                    }
+                });
+                
+                events.on('player:dash', (data) => {
+                    const entity = this.currentGameState.entities.find(e => e.id === data.entityId);
+                    if (entity) {
+                        for (let i = 0; i < 20; i++) {
+                            this.particles.push({
+                                x: entity.position.x,
+                                y: entity.position.y,
+                                vx: (Math.random() - 0.5) * 400,
+                                vy: (Math.random() - 0.5) * 400,
+                                life: 1000,
+                                color: '#00ffff'
+                            });
+                        }
+                    }
+                });
+            }
+            
+            init(canvasId) {
+                this.canvas = document.getElementById(canvasId);
+                this.ctx = this.canvas.getContext('2d');
+                this.canvas.width = this.config.arenaSize.width;
+                this.canvas.height = this.config.arenaSize.height;
+                
+                this.lastTime = 0;
+                requestAnimationFrame((t) => this.renderFrame(t));
+            }
+            
+            renderFrame(timestamp) {
+                const deltaTime = timestamp - this.lastTime;
+                this.lastTime = timestamp;
+                
+                // Clear
+                this.ctx.fillStyle = '#1a1a2a';
+                this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw grid
+                this.ctx.strokeStyle = '#333';
+                this.ctx.lineWidth = 1;
+                for (let x = 50; x < this.canvas.width; x += 50) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(x, 0);
+                    this.ctx.lineTo(x, this.canvas.height);
+                    this.ctx.stroke();
+                }
+                for (let y = 50; y < this.canvas.height; y += 50) {
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, y);
+                    this.ctx.lineTo(this.canvas.width, y);
+                    this.ctx.stroke();
+                }
+                
+                // Draw bounds
+                this.ctx.strokeStyle = '#fff';
+                this.ctx.lineWidth = 2;
+                this.ctx.strokeRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Draw entities
+                for (const entity of this.currentGameState.entities) {
+                    this.ctx.save();
+                    this.ctx.translate(entity.position.x, entity.position.y);
+                    
+                    // Draw circle
+                    this.ctx.beginPath();
+                    this.ctx.arc(0, 0, entity.radius, 0, Math.PI * 2);
+                    this.ctx.fillStyle = this.playerColors[entity.id] || '#999';
+                    this.ctx.fill();
+                    
+                    // Draw velocity indicator
+                    this.ctx.strokeStyle = 'white';
+                    this.ctx.lineWidth = 2;
+                    this.ctx.beginPath();
+                    this.ctx.moveTo(0, 0);
+                    const vel = Math.min(entity.velocity.length() * 0.1, entity.radius);
+                    this.ctx.lineTo(
+                        entity.velocity.x * 0.1,
+                        entity.velocity.y * 0.1
+                    );
+                    this.ctx.stroke();
+                    
+                    // Label
+                    this.ctx.fillStyle = 'white';
+                    this.ctx.font = '12px Arial';
+                    this.ctx.textAlign = 'center';
+                    const label = entity.id.startsWith('ball') ? 
+                        `P${entity.id.replace('ball', '')}` : entity.id;
+                    this.ctx.fillText(label, 0, -entity.radius - 5);
+                    
+                    this.ctx.restore();
+                }
+                
+                // Draw particles
+                for (let i = this.particles.length - 1; i >= 0; i--) {
+                    const p = this.particles[i];
+                    p.x += p.vx * deltaTime / 1000;
+                    p.y += p.vy * deltaTime / 1000;
+                    p.life -= deltaTime;
+                    
+                    if (p.life <= 0) {
+                        this.particles.splice(i, 1);
+                        continue;
+                    }
+                    
+                    this.ctx.globalAlpha = p.life / 500;
+                    this.ctx.fillStyle = p.color;
+                    this.ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+                    this.ctx.globalAlpha = 1;
+                }
+                
+                // UI
+                this.ctx.fillStyle = 'white';
+                this.ctx.font = '16px Arial';
+                this.ctx.textAlign = 'left';
+                this.ctx.fillText('Physics Battle Arena - Online', 10, 25);
+                this.ctx.fillText('Players: ' + this.currentGameState.entities.filter(e => e.id.startsWith('ball')).length, 10, 45);
+                
+                requestAnimationFrame((t) => this.renderFrame(t));
+            }
+        }
+        
+        // PlayerController - same as before
+        class PlayerController {
+            constructor(config, events, playerId, entityId) {
+                this.config = config;
+                this.events = events;
+                this.playerId = playerId;
+                this.entityId = entityId;
+                this.inputState = {
+                    movement: new Vector2(0, 0),
+                    isDashing: false,
+                    lastDashTime: 0
+                };
+            }
+            
+            bindControls() {
+                document.addEventListener('keydown', (e) => {
+                    switch(e.key.toLowerCase()) {
+                        case 'a':
+                        case 'arrowleft':
+                            this.inputState.movement.x = -1;
+                            break;
+                        case 'd':
+                        case 'arrowright':
+                            this.inputState.movement.x = 1;
+                            break;
+                        case 'w':
+                        case 'arrowup':
+                            this.inputState.movement.y = -1;
+                            break;
+                        case 's':
+                        case 'arrowdown':
+                            this.inputState.movement.y = 1;
+                            break;
+                        case ' ':
+                        case 'shift':
+                            this.tryDash();
+                            break;
+                    }
+                });
+                
+                document.addEventListener('keyup', (e) => {
+                    switch(e.key.toLowerCase()) {
+                        case 'a':
+                        case 'arrowleft':
+                            if (this.inputState.movement.x < 0) this.inputState.movement.x = 0;
+                            break;
+                        case 'd':
+                        case 'arrowright':
+                            if (this.inputState.movement.x > 0) this.inputState.movement.x = 0;
+                            break;
+                        case 'w':
+                        case 'arrowup':
+                            if (this.inputState.movement.y < 0) this.inputState.movement.y = 0;
+                            break;
+                        case 's':
+                        case 'arrowdown':
+                            if (this.inputState.movement.y > 0) this.inputState.movement.y = 0;
+                            break;
+                    }
+                });
+            }
+            
+            update(deltaTime) {
+                const force = this.inputState.movement.normalize().multiply(this.config.baseForce);
+                
+                if (this.inputState.isDashing) {
+                    force.x *= this.config.dashMultiplier;
+                    force.y *= this.config.dashMultiplier;
+                    if (Date.now() - this.inputState.lastDashTime > 100) {
+                        this.inputState.isDashing = false;
+                    }
+                }
+                
+                if (force.length() > 0) {
+                    this.events.emit('player:applyForce', {
+                        entityId: this.entityId,
+                        force: force
+                    });
+                }
+            }
+            
+            tryDash() {
+                const now = Date.now();
+                if (now - this.inputState.lastDashTime >= this.config.dashCooldown) {
+                    this.inputState.isDashing = true;
+                    this.inputState.lastDashTime = now;
+                    console.log('DASH! Next dash available in 1 second');
+                    this.events.emit('player:dash', { entityId: this.entityId });
+                }
+            }
+        }
+        
+        // Main Application with Networking
+        class PhysicsBattleArenaMultiplayer {
+            constructor() {
+                this.eventBus = new EventEmitter();
+                this.network = null;
+                this.physics = null;
+                this.renderer = null;
+                this.playerController = null;
+                this.gameStarted = false;
+            }
+            
+            async connect(serverUrl) {
+                // Create network layer
+                this.network = new NetworkLayer({
+                    serverUrl: serverUrl,
+                    tickRate: 60,
+                    snapshotRate: 20,
+                    interpolationDelay: 100
+                }, this.eventBus);
+                
+                // Wire network events
+                this.eventBus.on('network:connected', () => {
+                    document.getElementById('connectionStatus').className = 'connected';
+                    document.getElementById('connectionStatus').textContent = 'Connected!';
+                });
+                
+                this.eventBus.on('network:disconnected', () => {
+                    document.getElementById('connectionStatus').className = 'disconnected';
+                    document.getElementById('connectionStatus').textContent = 'Disconnected';
+                    document.getElementById('connectButton').disabled = false;
+                });
+                
+                this.eventBus.on('network:welcome', (data) => {
+                    console.log('Welcome! You are', data.playerId, 'controlling', data.ballId);
+                    document.getElementById('playerInfo').textContent = 
+                        `You are ${data.playerId} controlling ${data.ballId} (${data.isHost ? 'HOST' : 'CLIENT'})`;
+                    this.initializeGame(data);
+                });
+                
+                this.eventBus.on('network:playerJoined', (data) => {
+                    console.log('Player joined:', data.playerId);
+                    if (this.physics) {
+                        this.physics.addBody({
+                            id: data.ballId,
+                            position: new Vector2(data.entity.position.x, data.entity.position.y),
+                            velocity: new Vector2(data.entity.velocity.x, data.entity.velocity.y),
+                            mass: data.entity.mass,
+                            radius: data.entity.radius
+                        });
+                    }
+                });
+                
+                this.eventBus.on('network:playerLeft', (data) => {
+                    console.log('Player left:', data.playerId);
+                    if (this.physics) {
+                        this.physics.removeBody(data.ballId);
+                    }
+                });
+                
+                this.eventBus.on('network:remoteInput', (data) => {
+                    if (this.physics) {
+                        this.physics.applyRemoteInput(data.ballId, data.input);
+                    }
+                });
+                
+                this.eventBus.on('network:physicsSync', (state) => {
+                    if (this.physics && !this.network.isHost) {
+                        this.physics.syncState(state);
+                    }
+                });
+                
+                // Connect to server
+                await this.network.connect(serverUrl);
+            }
+            
+            initializeGame(welcomeData) {
+                if (this.gameStarted) return;
+                this.gameStarted = true;
+                
+                // Create physics
+                this.physics = new PhysicsEngine({
+                    gravity: new Vector2(0, 300),
+                    worldBounds: {
+                        min: new Vector2(0, 0),
+                        max: new Vector2(800, 600)
+                    },
+                    maxVelocity: 800,
+                    ccdThreshold: 2500
+                }, this.eventBus);
+                
+                // Create renderer
+                this.renderer = new RenderEngine({
+                    targetFPS: 60,
+                    arenaSize: { width: 800, height: 600 },
+                    camera: { x: 0, y: 0, zoom: 1 }
+                }, this.eventBus);
+                
+                this.renderer.init('gameCanvas');
+                
+                // Add all entities
+                welcomeData.entities.forEach(entity => {
+                    this.physics.addBody({
+                        id: entity.id,
+                        position: new Vector2(entity.position.x, entity.position.y),
+                        velocity: new Vector2(entity.velocity.x, entity.velocity.y),
+                        mass: entity.mass,
+                        radius: entity.radius
+                    });
+                });
+                
+                // Player controller for our ball
+                this.playerController = new PlayerController({
+                    baseForce: 50000,
+                    maxForce: 500000,
+                    dashMultiplier: 50,
+                    dashCooldown: 1000
+                }, this.eventBus, welcomeData.playerId, welcomeData.ballId);
+                
+                this.playerController.bindControls();
+                
+                // Wire local input to network
+                this.eventBus.on('player:applyForce', (data) => {
+                    // Apply locally
+                    this.physics.applyForce(data.entityId, data.force);
+                    // Send to network
+                    this.network.sendInput(data.force);
+                });
+                
+                // Host sends physics updates
+                if (welcomeData.isHost) {
+                    this.eventBus.on('physics:update', (state) => {
+                        this.network.sendPhysicsUpdate(state);
+                    });
+                }
+                
+                // Start game loop
+                setInterval(() => {
+                    this.physics.step(0.016);
+                    this.playerController.update(16);
+                }, 16);
+            }
+        }
+        
+        // Initialize
+        const game = new PhysicsBattleArenaMultiplayer();
+        
+        document.getElementById('connectButton').addEventListener('click', async () => {
+            const serverUrl = document.getElementById('serverInput').value;
+            if (!serverUrl) {
+                alert('Please enter a server URL');
+                return;
+            }
+            
+            document.getElementById('connectButton').disabled = true;
+            document.getElementById('connectionStatus').textContent = 'Connecting...';
+            
+            try {
+                await game.connect(serverUrl);
+            } catch (error) {
+                console.error('Connection failed:', error);
+                document.getElementById('connectionStatus').className = 'disconnected';
+                document.getElementById('connectionStatus').textContent = 'Connection failed';
+                document.getElementById('connectButton').disabled = false;
+            }
+        });
+        
+        // For Glitch deployment, auto-connect if URL parameter provided
+        const urlParams = new URLSearchParams(window.location.search);
+        const autoServer = urlParams.get('server');
+        if (autoServer) {
+            document.getElementById('serverInput').value = autoServer;
+            document.getElementById('connectButton').click();
+        }
+        
+        // Auto-detect Glitch environment
+        if (window.location.hostname.includes('.glitch.me')) {
+            const wsUrl = `wss://${window.location.hostname}`;
+            document.getElementById('serverInput').value = wsUrl;
+            console.log('Detected Glitch environment, auto-connecting to:', wsUrl);
+            // Auto-connect after page loads
+            setTimeout(() => {
+                document.getElementById('connectButton').click();
+            }, 500);
+        }
+    </script>
+</body>
+</html>
