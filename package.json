@@ -4,7 +4,8 @@
   "description": "Multiplayer physics battle game",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "./start.sh",
+    "start-backup": "node server.js",
     "server": "node server.js",
     "server-dev": "nodemon server.js"
   },
